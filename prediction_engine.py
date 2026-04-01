@@ -618,6 +618,19 @@ class PredictionEngine:
         current_price = float(df["Close"].iloc[-1])
         price_change_1d = float(df["Close"].pct_change().iloc[-1] * 100)
 
+        # Reliability warning based on prediction horizon
+        if days <= 7:
+            reliability_warning = "High reliability - short-term predictions are most accurate"
+        elif days <= 14:
+            reliability_warning = "Moderate reliability - predictions become less certain"
+        elif days <= 30:
+            reliability_warning = "Low reliability - use with caution, consider Monte Carlo ranges"
+        else:
+            reliability_warning = "Very low reliability - long-term predictions are highly speculative"
+
+        # Confidence decay: factor decreases 0.03 per day, minimum 0.1
+        confidence_decay = [round(max(0.1, 1.0 - (i * 0.03)), 4) for i in range(days)]
+
         return {
             "ticker": ticker,
             "current_price": round(current_price, 2),
@@ -628,6 +641,8 @@ class PredictionEngine:
             "confidence_intervals": {k: {"lower": [round(float(v), 2) for v in ci["lower"]], "upper": [round(float(v), 2) for v in ci["upper"]]} for k, ci in ci_data.items()},
             "monte_carlo": monte_carlo,
             "confidence_score": confidence_score,
+            "reliability_warning": reliability_warning,
+            "confidence_decay": confidence_decay,
             "historical": historical,
             "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
@@ -758,10 +773,79 @@ class PredictionEngine:
         else:
             overall = "HOLD"
 
+        # --- Pivot Points (Standard) ---
+        prev_high = float(latest["High"])
+        prev_low = float(latest["Low"])
+        prev_close = float(latest["Close"])
+        pivot = (prev_high + prev_low + prev_close) / 3.0
+        r1 = 2 * pivot - prev_low
+        s1 = 2 * pivot - prev_high
+        r2 = pivot + (prev_high - prev_low)
+        s2 = pivot - (prev_high - prev_low)
+        r3 = prev_high + 2 * (pivot - prev_low)
+        s3 = prev_low - 2 * (prev_high - pivot)
+        pivot_points = {
+            "pivot": round(pivot, 2),
+            "r1": round(r1, 2),
+            "r2": round(r2, 2),
+            "r3": round(r3, 2),
+            "s1": round(s1, 2),
+            "s2": round(s2, 2),
+            "s3": round(s3, 2),
+        }
+
+        # --- Support / Resistance from recent price action (last 60 days) ---
+        recent = df.tail(60).copy()
+        recent_close = recent["Close"].values
+        support_levels = []
+        resistance_levels = []
+        window = 5
+        for i in range(window, len(recent_close) - window):
+            segment = recent_close[i - window : i + window + 1]
+            if recent_close[i] == segment.min():
+                support_levels.append(round(float(recent_close[i]), 2))
+            if recent_close[i] == segment.max():
+                resistance_levels.append(round(float(recent_close[i]), 2))
+
+        def deduplicate_levels(levels):
+            if not levels:
+                return levels
+            levels = sorted(set(levels))
+            deduped = [levels[0]]
+            for lv in levels[1:]:
+                if abs(lv - deduped[-1]) / deduped[-1] > 0.005:
+                    deduped.append(lv)
+            return deduped
+
+        support_levels = deduplicate_levels(support_levels)
+        resistance_levels = deduplicate_levels(resistance_levels)
+        support_resistance = {
+            "support": support_levels[-5:] if len(support_levels) > 5 else support_levels,
+            "resistance": resistance_levels[-5:] if len(resistance_levels) > 5 else resistance_levels,
+        }
+
+        # --- Fibonacci Retracement Levels (52-week high/low) ---
+        week52 = df.tail(252)
+        high_52 = float(week52["High"].max())
+        low_52 = float(week52["Low"].min())
+        diff = high_52 - low_52
+        fibonacci_levels = {
+            "high_52w": round(high_52, 2),
+            "low_52w": round(low_52, 2),
+            "level_236": round(high_52 - 0.236 * diff, 2),
+            "level_382": round(high_52 - 0.382 * diff, 2),
+            "level_500": round(high_52 - 0.500 * diff, 2),
+            "level_618": round(high_52 - 0.618 * diff, 2),
+            "level_786": round(high_52 - 0.786 * diff, 2),
+        }
+
         return {
             "ticker": ticker,
             "current_price": round(float(latest["Close"]), 2),
             "signals": signals,
             "overall_signal": overall,
-            "summary": {"buy_signals": buy_signals, "sell_signals": sell_signals, "neutral_signals": len(signals) - buy_signals - sell_signals}
+            "summary": {"buy_signals": buy_signals, "sell_signals": sell_signals, "neutral_signals": len(signals) - buy_signals - sell_signals},
+            "pivot_points": pivot_points,
+            "support_resistance": support_resistance,
+            "fibonacci_levels": fibonacci_levels,
         }

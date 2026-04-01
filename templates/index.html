@@ -14,6 +14,9 @@
             <p class="subtitle">Multi-Model Ensemble Stock Prediction Engine</p>
         </header>
 
+        <!-- Alert Notifications Banner -->
+        <div id="alertNotifications"></div>
+
         <!-- Navigation Tabs -->
         <nav class="tabs">
             <button class="tab active" data-tab="predict" onclick="switchTab('predict')">Predict</button>
@@ -70,6 +73,8 @@
                 </div>
             </div>
 
+            <div id="reliabilityWarning" class="reliability-warning hidden"></div>
+
             <div id="confidenceSection" class="section hidden">
                 <div class="confidence-gauge-container">
                     <div id="confidenceGauge" class="confidence-gauge">
@@ -125,6 +130,9 @@
                 <h2>Technical Analysis</h2>
                 <div id="overallSignal" class="overall-signal"></div>
                 <div id="signalsList" class="signals-list"></div>
+                <div id="pivotPointsSection" class="pivot-points-container"></div>
+                <div id="supportResistanceSection" class="support-resistance-container"></div>
+                <div id="fibonacciSection" class="fibonacci-container"></div>
             </div>
 
             <div id="summarySection" class="section hidden">
@@ -231,6 +239,10 @@
                     <button onclick="saveAlert()">Save Alert</button>
                     <button class="secondary" onclick="closeAlertModal()">Cancel</button>
                 </div>
+                <div id="activeAlertsList" class="active-alerts-section">
+                    <h4 style="margin-top:16px;margin-bottom:8px;color:var(--text-secondary);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.5px;">Active Alerts</h4>
+                    <div id="activeAlertsContent"><p style="color:var(--text-secondary);font-size:0.85rem;">No active alerts.</p></div>
+                </div>
             </div>
         </div>
 
@@ -250,7 +262,7 @@
 
         <!-- Floating Action Buttons -->
         <div class="fab-container">
-            <button class="fab" onclick="openAlertModal()" title="Set Price Alert">&#9888;</button>
+            <button class="fab" onclick="openAlertModal()" title="Set Price Alert" id="alertFab">&#9888;<span id="alertBadge" class="alert-badge hidden">0</span></button>
             <button class="fab" onclick="exportCSV()" title="Export to CSV">&#8681;</button>
             <button class="fab" onclick="document.getElementById('shortcutsModal').classList.remove('hidden')" title="Keyboard Shortcuts">?</button>
         </div>

@@ -22,8 +22,22 @@ from risk_analytics import compute_risk_metrics, compute_correlation, compute_be
 app = Flask(__name__)
 engine = PredictionEngine()
 
-# In-memory watchlist (per session in production, use DB)
-watchlist = []
+WATCHLIST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watchlist.json")
+
+
+def _load_watchlist():
+    """Load watchlist from JSON file, returning empty list if file doesn't exist."""
+    try:
+        with open(WATCHLIST_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_watchlist(watchlist):
+    """Save watchlist to JSON file."""
+    with open(WATCHLIST_FILE, "w") as f:
+        json.dump(watchlist, f, indent=2)
 
 
 @app.route("/")
@@ -139,10 +153,69 @@ def compare():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/check_alerts", methods=["POST"])
+def check_alerts():
+    """Check price alerts against current market prices."""
+    try:
+        data = request.get_json()
+        alerts_list = data.get("alerts", [])
+        if not alerts_list:
+            return jsonify({"triggered": []})
+
+        # Gather unique tickers
+        tickers = list(set(a.get("ticker", "").upper().strip() for a in alerts_list if a.get("ticker")))
+        if not tickers:
+            return jsonify({"triggered": []})
+
+        # Fetch current prices for all unique tickers
+        current_prices = {}
+        for ticker in tickers:
+            try:
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period="5d")
+                if not hist.empty:
+                    current_prices[ticker] = round(float(hist["Close"].iloc[-1]), 2)
+            except Exception:
+                pass
+
+        # Check each alert
+        triggered = []
+        for i, alert in enumerate(alerts_list):
+            ticker = alert.get("ticker", "").upper().strip()
+            target_price = float(alert.get("price", 0))
+            direction = alert.get("direction", "above")
+
+            if ticker not in current_prices:
+                continue
+
+            price = current_prices[ticker]
+            if direction == "above" and price >= target_price:
+                triggered.append({
+                    "index": i,
+                    "ticker": ticker,
+                    "target_price": target_price,
+                    "current_price": price,
+                    "direction": direction
+                })
+            elif direction == "below" and price <= target_price:
+                triggered.append({
+                    "index": i,
+                    "ticker": ticker,
+                    "target_price": target_price,
+                    "current_price": price,
+                    "direction": direction
+                })
+
+        return jsonify({"triggered": triggered, "prices": current_prices})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 400
+
+
 @app.route("/api/watchlist", methods=["GET"])
 def get_watchlist():
     results = []
-    for ticker in watchlist:
+    for ticker in _load_watchlist():
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period="5d")
@@ -159,8 +232,10 @@ def get_watchlist():
 def add_to_watchlist():
     data = request.get_json()
     ticker = data.get("ticker", "").upper().strip()
+    watchlist = _load_watchlist()
     if ticker and ticker not in watchlist:
         watchlist.append(ticker)
+        _save_watchlist(watchlist)
     return jsonify({"watchlist": watchlist})
 
 
@@ -168,8 +243,10 @@ def add_to_watchlist():
 def remove_from_watchlist():
     data = request.get_json()
     ticker = data.get("ticker", "").upper().strip()
+    watchlist = _load_watchlist()
     if ticker in watchlist:
         watchlist.remove(ticker)
+        _save_watchlist(watchlist)
     return jsonify({"watchlist": watchlist})
 
 

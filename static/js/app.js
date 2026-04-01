@@ -50,7 +50,7 @@ function showError(id, msg) {
 }
 
 function hideAllPredictionSections() {
-    ["stockInfo", "confidenceSection", "predictionSection", "monteCarloSection",
+    ["stockInfo", "reliabilityWarning", "confidenceSection", "predictionSection", "monteCarloSection",
      "accuracySection", "ensembleSection", "backtestSection", "technicalSection",
      "summarySection"].forEach(id => document.getElementById(id).classList.add("hidden"));
 }
@@ -103,6 +103,19 @@ function renderPrediction(data) {
     document.getElementById("infoConfidence").textContent = score + "/100";
     document.getElementById("infoConfidence").style.color =
         score >= 60 ? "#10b981" : score >= 40 ? "#f59e0b" : "#ef4444";
+
+    // Reliability warning banner
+    if (data.reliability_warning) {
+        const warningEl = document.getElementById("reliabilityWarning");
+        warningEl.textContent = data.reliability_warning;
+        warningEl.className = "reliability-warning";
+        const days = data.prediction_dates ? data.prediction_dates.length : 0;
+        if (days <= 7) warningEl.classList.add("reliability-high");
+        else if (days <= 14) warningEl.classList.add("reliability-moderate");
+        else if (days <= 30) warningEl.classList.add("reliability-low");
+        else warningEl.classList.add("reliability-very-low");
+        warningEl.classList.remove("hidden");
+    }
 
     renderConfidenceGauge(data);
     visibleModels = new Set(["Ensemble"]);
@@ -200,12 +213,34 @@ function renderPredictionChart(data) {
         });
     });
 
+    // Confidence decay shading: overlay rectangles with increasing red opacity
+    const decayShapes = [{ type: "line", x0: lastDate, x1: lastDate, y0: 0, y1: 1, yref: "paper",
+                           line: { color: "#f59e0b", width: 1, dash: "dash" } }];
+    if (data.confidence_decay && data.prediction_dates) {
+        const decay = data.confidence_decay;
+        const pDates = data.prediction_dates;
+        // Group days into bands to avoid too many shapes
+        const bandSize = Math.max(1, Math.floor(pDates.length / 20));
+        for (let i = 0; i < pDates.length; i += bandSize) {
+            const endIdx = Math.min(i + bandSize, pDates.length) - 1;
+            const avgDecay = decay[Math.floor((i + endIdx) / 2)] || decay[i];
+            const opacity = Math.max(0, (1.0 - avgDecay) * 0.15);
+            if (opacity > 0.005) {
+                decayShapes.push({
+                    type: "rect", x0: pDates[i], x1: pDates[endIdx],
+                    y0: 0, y1: 1, yref: "paper",
+                    fillcolor: `rgba(239, 68, 68, ${opacity.toFixed(4)})`,
+                    line: { width: 0 }, layer: "below"
+                });
+            }
+        }
+    }
+
     Plotly.newPlot("predictionChart", traces, {
         ...PLOTLY_LAYOUT,
         xaxis: { ...PLOTLY_LAYOUT.xaxis, title: "Date" },
         yaxis: { ...PLOTLY_LAYOUT.yaxis, title: "Price ($)" },
-        shapes: [{ type: "line", x0: lastDate, x1: lastDate, y0: 0, y1: 1, yref: "paper",
-                   line: { color: "#f59e0b", width: 1, dash: "dash" } }],
+        shapes: decayShapes,
         annotations: [{ x: lastDate, y: 1, yref: "paper", text: "Prediction Start",
                        showarrow: false, font: { color: "#f59e0b", size: 10 }, yshift: 10 }]
     }, { responsive: true });
@@ -282,6 +317,19 @@ function renderEnsembleChart(data) {
 function renderSummaryTable(data) {
     const tbody = document.getElementById("summaryBody");
     tbody.innerHTML = "";
+
+    // Add reliability context row at the top if available
+    if (data.reliability_warning) {
+        const lastDecay = data.confidence_decay ? data.confidence_decay[data.confidence_decay.length - 1] : null;
+        const decayStr = lastDecay !== null ? (lastDecay * 100).toFixed(0) + "%" : "N/A";
+        tbody.innerHTML += `
+            <tr style="background: rgba(59, 130, 246, 0.05);">
+                <td colspan="5" style="font-style: italic; color: var(--text-secondary);">${data.reliability_warning}</td>
+                <td colspan="2" style="font-style: italic; color: var(--text-secondary);">End-of-range confidence: ${decayStr}</td>
+            </tr>
+        `;
+    }
+
     Object.entries(data.predictions).forEach(([name, preds]) => {
         const avg = (arr, n) => arr.slice(0, Math.min(n, arr.length)).reduce((a, b) => a + b, 0) / Math.min(n, arr.length);
         const direction = preds[preds.length - 1] > data.current_price ? "UP" : "DOWN";
@@ -392,6 +440,76 @@ function renderTechnical(data) {
         return `<div class="signal-item"><div><div class="signal-name">${s.indicator}</div><div class="signal-value">${s.value}</div></div>
                 <span class="signal-badge ${badge}">${s.signal}</span></div>`;
     }).join("");
+
+    // Pivot Points
+    if (data.pivot_points) {
+        const pp = data.pivot_points;
+        document.getElementById("pivotPointsSection").innerHTML = `
+            <h3 class="ta-sub-heading">Pivot Points (Standard)</h3>
+            <div class="pivot-table">
+                <div class="pivot-row pivot-header">
+                    <span>S3</span><span>S2</span><span>S1</span><span class="pivot-center">Pivot</span><span>R1</span><span>R2</span><span>R3</span>
+                </div>
+                <div class="pivot-row">
+                    <span class="pivot-support">$${pp.s3}</span>
+                    <span class="pivot-support">$${pp.s2}</span>
+                    <span class="pivot-support">$${pp.s1}</span>
+                    <span class="pivot-center-val">$${pp.pivot}</span>
+                    <span class="pivot-resistance">$${pp.r1}</span>
+                    <span class="pivot-resistance">$${pp.r2}</span>
+                    <span class="pivot-resistance">$${pp.r3}</span>
+                </div>
+            </div>`;
+    }
+
+    // Support / Resistance
+    if (data.support_resistance) {
+        const sr = data.support_resistance;
+        const supHtml = (sr.support || []).length > 0
+            ? sr.support.map(l => `<span class="sr-level sr-support">$${l}</span>`).join("")
+            : '<span class="sr-empty">No levels detected</span>';
+        const resHtml = (sr.resistance || []).length > 0
+            ? sr.resistance.map(l => `<span class="sr-level sr-resistance">$${l}</span>`).join("")
+            : '<span class="sr-empty">No levels detected</span>';
+        document.getElementById("supportResistanceSection").innerHTML = `
+            <h3 class="ta-sub-heading">Support &amp; Resistance (60-Day)</h3>
+            <div class="sr-grid">
+                <div class="sr-column">
+                    <h4 class="sr-label sr-label-support">Support Levels</h4>
+                    <div class="sr-levels">${supHtml}</div>
+                </div>
+                <div class="sr-column">
+                    <h4 class="sr-label sr-label-resistance">Resistance Levels</h4>
+                    <div class="sr-levels">${resHtml}</div>
+                </div>
+            </div>`;
+    }
+
+    // Fibonacci Retracement
+    if (data.fibonacci_levels) {
+        const fb = data.fibonacci_levels;
+        const curPrice = data.current_price;
+        const fibRows = [
+            { label: "0% (52w High)", value: fb.high_52w },
+            { label: "23.6%", value: fb.level_236 },
+            { label: "38.2%", value: fb.level_382 },
+            { label: "50.0%", value: fb.level_500 },
+            { label: "61.8%", value: fb.level_618 },
+            { label: "78.6%", value: fb.level_786 },
+            { label: "100% (52w Low)", value: fb.low_52w },
+        ];
+        document.getElementById("fibonacciSection").innerHTML = `
+            <h3 class="ta-sub-heading">Fibonacci Retracement (52-Week)</h3>
+            <div class="fib-table">
+                ${fibRows.map(r => {
+                    const isNearest = Math.abs(r.value - curPrice) / curPrice < 0.02;
+                    return `<div class="fib-row${isNearest ? ' fib-nearest' : ''}">
+                        <span class="fib-label">${r.label}</span>
+                        <span class="fib-value">$${r.value.toFixed(2)}</span>
+                    </div>`;
+                }).join("")}
+            </div>`;
+    }
 }
 
 // ==================== RISK ANALYSIS ====================
@@ -638,7 +756,101 @@ function saveAlert() {
 
     alerts.push({ ticker, price, direction, active: true, created: new Date().toISOString() });
     localStorage.setItem("stockAlerts", JSON.stringify(alerts));
-    closeAlertModal();
+    renderActiveAlerts();
+    updateAlertBadge();
+    document.getElementById("alertPrice").value = "";
+}
+
+function removeAlert(index) {
+    alerts.splice(index, 1);
+    localStorage.setItem("stockAlerts", JSON.stringify(alerts));
+    renderActiveAlerts();
+    updateAlertBadge();
+}
+
+function renderActiveAlerts() {
+    const container = document.getElementById("activeAlertsContent");
+    const activeAlerts = alerts.filter(a => a.active);
+    if (activeAlerts.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary);font-size:0.85rem;">No active alerts.</p>';
+        return;
+    }
+    container.innerHTML = alerts.map((a, i) => {
+        if (!a.active) return "";
+        const dirLabel = a.direction === "above" ? "Above" : "Below";
+        const dirColor = a.direction === "above" ? "#10b981" : "#ef4444";
+        return `<div class="active-alert-item">
+            <div class="alert-info">
+                <span class="alert-ticker">${a.ticker}</span>
+                <span class="alert-detail" style="color:${dirColor}">${dirLabel} $${a.price.toFixed(2)}</span>
+            </div>
+            <button class="alert-remove" onclick="removeAlert(${i})">Remove</button>
+        </div>`;
+    }).join("");
+}
+
+function updateAlertBadge() {
+    const badge = document.getElementById("alertBadge");
+    const count = alerts.filter(a => a.active).length;
+    if (count > 0) {
+        badge.textContent = count;
+        badge.classList.remove("hidden");
+    } else {
+        badge.classList.add("hidden");
+    }
+}
+
+async function checkAlerts() {
+    const activeAlerts = alerts.filter(a => a.active);
+    if (activeAlerts.length === 0) return;
+
+    try {
+        const res = await fetch("/api/check_alerts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ alerts: activeAlerts })
+        });
+        const data = await res.json();
+        if (data.error) { console.error("Alert check error:", data.error); return; }
+
+        if (data.triggered && data.triggered.length > 0) {
+            const banner = document.getElementById("alertNotifications");
+            data.triggered.forEach(t => {
+                // Find the actual index in the full alerts array
+                let matchCount = 0;
+                let realIndex = -1;
+                for (let i = 0; i < alerts.length; i++) {
+                    if (alerts[i].active) {
+                        if (matchCount === t.index) { realIndex = i; break; }
+                        matchCount++;
+                    }
+                }
+
+                const cssClass = t.direction === "above" ? "alert-above" : "alert-below";
+                const arrow = t.direction === "above" ? "\u25B2" : "\u25BC";
+                const dirText = t.direction === "above" ? "rose above" : "dropped below";
+
+                const notification = document.createElement("div");
+                notification.className = `alert-notification ${cssClass}`;
+                notification.innerHTML = `
+                    <span>${arrow} <strong>${t.ticker}</strong> ${dirText} $${t.target_price.toFixed(2)} &mdash; now at <strong>$${t.current_price.toFixed(2)}</strong></span>
+                    <button class="alert-dismiss" onclick="this.parentElement.remove()">&times;</button>
+                `;
+                banner.appendChild(notification);
+
+                // Deactivate the triggered alert
+                if (realIndex >= 0) {
+                    alerts[realIndex].active = false;
+                }
+            });
+
+            localStorage.setItem("stockAlerts", JSON.stringify(alerts));
+            renderActiveAlerts();
+            updateAlertBadge();
+        }
+    } catch (e) {
+        console.error("Failed to check alerts:", e);
+    }
 }
 
 // ==================== EXPORT CSV ====================
@@ -688,3 +900,10 @@ document.addEventListener("keydown", e => {
         document.getElementById("shortcutsModal").classList.add("hidden");
     }
 });
+
+// ==================== INIT ALERTS ====================
+
+renderActiveAlerts();
+updateAlertBadge();
+checkAlerts();
+setInterval(checkAlerts, 60000);
