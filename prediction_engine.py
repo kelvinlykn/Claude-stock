@@ -167,7 +167,7 @@ class PredictionEngine:
         now = datetime.now()
         if cache_key in self.cache:
             cached_time, cached_data = self.cache[cache_key]
-            if (now - cached_time).seconds < 300:
+            if (now - cached_time).total_seconds() < 300:
                 return cached_data.copy()
 
         stock = yf.Ticker(ticker)
@@ -240,22 +240,36 @@ class PredictionEngine:
             df_work = pd.concat([df_work, new_row])
             df_work = compute_technical_indicators(df_work)
             df_work = df_work.replace([np.inf, -np.inf], np.nan)
-            df_work = df_work.fillna(method="ffill")
+            df_work = df_work.ffill()
 
         return forecasts
 
-    def _bootstrap_confidence(self, predictions, n_bootstrap=100, confidence=0.90):
-        """Compute confidence intervals via bootstrapping."""
+    def _bootstrap_confidence(self, predictions, n_bootstrap=200, confidence=0.90, historical_returns=None):
+        """Compute confidence intervals via residual bootstrapping with expanding uncertainty."""
         preds = np.array(predictions)
         n = len(preds)
-        boot_means = []
-        for _ in range(n_bootstrap):
-            noise = np.random.normal(0, 0.02, n)  # 2% noise
-            boot_means.append(preds * (1 + noise))
-        boot_array = np.array(boot_means)
+
+        # Use historical return volatility if available, else estimate from predictions
+        if historical_returns is not None and len(historical_returns) > 20:
+            daily_vol = np.std(historical_returns)
+        else:
+            # Estimate from prediction changes
+            pred_returns = np.diff(preds) / preds[:-1] if len(preds) > 1 else np.array([0.01])
+            daily_vol = max(np.std(pred_returns), 0.005)
+
+        boot_paths = np.zeros((n_bootstrap, n))
+        for i in range(n_bootstrap):
+            # Resample residuals with expanding uncertainty over time
+            cumulative_noise = np.zeros(n)
+            for t in range(n):
+                # Uncertainty grows with sqrt(time) - standard diffusion model
+                shock = np.random.normal(0, daily_vol * np.sqrt(t + 1))
+                cumulative_noise[t] = shock
+            boot_paths[i] = preds * (1 + cumulative_noise)
+
         alpha = (1 - confidence) / 2
-        lower = np.percentile(boot_array, alpha * 100, axis=0)
-        upper = np.percentile(boot_array, (1 - alpha) * 100, axis=0)
+        lower = np.percentile(boot_paths, alpha * 100, axis=0)
+        upper = np.percentile(boot_paths, (1 - alpha) * 100, axis=0)
         return lower.tolist(), upper.tolist()
 
     def _monte_carlo_simulation(self, df, days, n_simulations=500):
@@ -346,7 +360,8 @@ class PredictionEngine:
             last_seq[0, -1, 0] = pred[0, 0]
 
         future_prices = scaler.inverse_transform(np.array(future).reshape(-1, 1)).flatten()
-        ci_lower, ci_upper = self._bootstrap_confidence(future_prices)
+        hist_returns = np.diff(close_data.flatten()) / close_data.flatten()[:-1]
+        ci_lower, ci_upper = self._bootstrap_confidence(future_prices, historical_returns=hist_returns)
 
         return {
             "predictions": future_prices.tolist(),
@@ -554,7 +569,7 @@ class PredictionEngine:
 
         # Ensemble (inverse-MAE weighted)
         if model_predictions:
-            available_maes = {k: results[k]["mae"] for k in model_predictions if results[k].get("mae") and isinstance(results[k]["mae"], (int, float)) and results[k]["mae"] > 0}
+            available_maes = {k: results[k]["mae"] for k in model_predictions if results[k].get("mae") and isinstance(results[k]["mae"], (int, float)) and results[k]["mae"] > 0.001}
             if available_maes:
                 inv_maes = {k: 1.0 / v for k, v in available_maes.items()}
                 total_inv = sum(inv_maes.values())
