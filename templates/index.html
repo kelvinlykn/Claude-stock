@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockPredict AI - Multi-Model Stock Prediction</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>StockPredict AI</h1>
+            <p class="subtitle">Multi-Model Ensemble Stock Prediction Engine</p>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="predict" onclick="switchTab('predict')">Predict</button>
+            <button class="tab" data-tab="risk" onclick="switchTab('risk')">Risk Analysis</button>
+            <button class="tab" data-tab="compare" onclick="switchTab('compare')">Compare</button>
+            <button class="tab" data-tab="watchlist" onclick="switchTab('watchlist')">Watchlist</button>
+        </nav>
+
+        <!-- Predict Tab -->
+        <div id="tab-predict" class="tab-content active">
+            <div class="controls-panel">
+                <div class="input-group">
+                    <label for="ticker">Stock Ticker</label>
+                    <input type="text" id="ticker" placeholder="e.g. AAPL, MSFT, TSLA" value="AAPL">
+                </div>
+                <div class="input-group">
+                    <label for="days">Prediction Days</label>
+                    <input type="number" id="days" min="1" max="365" value="30">
+                </div>
+                <div class="button-group">
+                    <button id="predictBtn" onclick="runPrediction()">Predict</button>
+                    <button onclick="runBacktest()" class="secondary">Backtest</button>
+                    <button onclick="runTechnical()" class="secondary">Technical</button>
+                </div>
+            </div>
+
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <p>Running prediction models... This may take a moment.</p>
+            </div>
+
+            <div id="error" class="error-banner hidden"></div>
+
+            <div id="stockInfo" class="stock-info hidden">
+                <div class="info-item">
+                    <span class="label">Ticker</span>
+                    <span id="infoTicker" class="value ticker-value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Current Price</span>
+                    <span id="infoPrice" class="value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">24h Change</span>
+                    <span id="infoChange" class="value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Confidence Score</span>
+                    <span id="infoConfidence" class="value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Last Updated</span>
+                    <span id="infoUpdated" class="value">-</span>
+                </div>
+            </div>
+
+            <div id="confidenceSection" class="section hidden">
+                <div class="confidence-gauge-container">
+                    <div id="confidenceGauge" class="confidence-gauge">
+                        <div class="gauge-fill" id="gaugeFill"></div>
+                        <div class="gauge-text" id="gaugeText">0</div>
+                    </div>
+                    <div class="confidence-details">
+                        <h3>Prediction Confidence</h3>
+                        <p id="confidenceDesc" class="confidence-desc"></p>
+                        <div id="mcProb" class="mc-prob"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="predictionSection" class="section hidden">
+                <h2>Price Predictions</h2>
+                <div class="chart-controls">
+                    <label>Models:</label>
+                    <div id="modelToggles" class="model-toggles"></div>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="showCI" checked onchange="renderPredictionChart(currentData)">
+                        Confidence Intervals
+                    </label>
+                </div>
+                <div id="predictionChart" class="chart"></div>
+            </div>
+
+            <div id="monteCarloSection" class="section hidden">
+                <h2>Monte Carlo Simulation</h2>
+                <p class="section-desc" id="mcDesc"></p>
+                <div id="monteCarloChart" class="chart"></div>
+            </div>
+
+            <div id="accuracySection" class="section hidden">
+                <h2>Model Accuracy (MAE - Lower is Better)</h2>
+                <div id="accuracyChart" class="chart"></div>
+                <div id="modelCards" class="model-cards"></div>
+            </div>
+
+            <div id="ensembleSection" class="section hidden">
+                <h2>Ensemble Model Weights</h2>
+                <p class="section-desc">Models with lower error get higher weight.</p>
+                <div id="ensembleChart" class="chart"></div>
+            </div>
+
+            <div id="backtestSection" class="section hidden">
+                <h2>Backtest Results</h2>
+                <div id="backtestChart" class="chart"></div>
+                <div id="backtestMetrics" class="metrics-grid"></div>
+            </div>
+
+            <div id="technicalSection" class="section hidden">
+                <h2>Technical Analysis</h2>
+                <div id="overallSignal" class="overall-signal"></div>
+                <div id="signalsList" class="signals-list"></div>
+            </div>
+
+            <div id="summarySection" class="section hidden">
+                <h2>Prediction Summary</h2>
+                <div class="table-container">
+                    <table id="summaryTable">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>7-Day Avg</th>
+                                <th>14-Day Avg</th>
+                                <th>30-Day Avg</th>
+                                <th>Direction</th>
+                                <th>MAE</th>
+                                <th>Confidence Range</th>
+                            </tr>
+                        </thead>
+                        <tbody id="summaryBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Risk Analysis Tab -->
+        <div id="tab-risk" class="tab-content">
+            <div class="controls-panel">
+                <div class="input-group">
+                    <label for="riskTicker">Stock Ticker</label>
+                    <input type="text" id="riskTicker" placeholder="e.g. AAPL" value="AAPL">
+                </div>
+                <div class="button-group">
+                    <button id="riskBtn" onclick="runRiskAnalysis()">Analyze Risk</button>
+                </div>
+            </div>
+            <div id="riskLoading" class="loading hidden"><div class="spinner"></div><p>Analyzing risk...</p></div>
+            <div id="riskError" class="error-banner hidden"></div>
+            <div id="riskResults" class="hidden">
+                <div id="riskSummary" class="risk-summary"></div>
+                <div id="riskMetrics" class="metrics-grid"></div>
+                <div id="drawdownChart" class="chart section"></div>
+            </div>
+        </div>
+
+        <!-- Compare Tab -->
+        <div id="tab-compare" class="tab-content">
+            <div class="controls-panel">
+                <div class="input-group" style="flex: 1">
+                    <label for="compareTickers">Tickers (comma-separated)</label>
+                    <input type="text" id="compareTickers" placeholder="AAPL, MSFT, GOOGL, TSLA" value="AAPL, MSFT, GOOGL" style="width: 100%">
+                </div>
+                <div class="button-group">
+                    <button onclick="runCompare()">Compare</button>
+                    <button onclick="runCorrelation()" class="secondary">Correlation</button>
+                </div>
+            </div>
+            <div id="compareLoading" class="loading hidden"><div class="spinner"></div><p>Comparing stocks...</p></div>
+            <div id="compareError" class="error-banner hidden"></div>
+            <div id="compareResults" class="hidden">
+                <div id="compareChart" class="chart section"></div>
+                <div id="compareTable" class="section"></div>
+            </div>
+            <div id="correlationSection" class="section hidden">
+                <h2>Correlation Matrix</h2>
+                <div id="correlationChart" class="chart"></div>
+            </div>
+        </div>
+
+        <!-- Watchlist Tab -->
+        <div id="tab-watchlist" class="tab-content">
+            <div class="controls-panel">
+                <div class="input-group">
+                    <label for="watchTicker">Add Ticker</label>
+                    <input type="text" id="watchTicker" placeholder="e.g. AAPL">
+                </div>
+                <div class="button-group">
+                    <button onclick="addToWatchlist()">Add</button>
+                    <button onclick="refreshWatchlist()" class="secondary">Refresh</button>
+                </div>
+            </div>
+            <div id="watchlistLoading" class="loading hidden"><div class="spinner"></div><p>Loading watchlist...</p></div>
+            <div id="watchlistContent" class="watchlist-grid"></div>
+        </div>
+
+        <!-- Price Alert Modal -->
+        <div id="alertModal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Set Price Alert</h3>
+                <div class="input-group">
+                    <label for="alertTicker">Ticker</label>
+                    <input type="text" id="alertTicker" placeholder="AAPL" value="AAPL">
+                </div>
+                <div class="input-group">
+                    <label for="alertPrice">Target Price ($)</label>
+                    <input type="number" id="alertPrice" step="0.01" placeholder="150.00">
+                </div>
+                <div class="input-group">
+                    <label for="alertDirection">Direction</label>
+                    <select id="alertDirection" style="padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);width:200px;">
+                        <option value="above">Price Goes Above</option>
+                        <option value="below">Price Goes Below</option>
+                    </select>
+                </div>
+                <div class="button-group" style="margin-left:0;margin-top:12px;">
+                    <button onclick="saveAlert()">Save Alert</button>
+                    <button class="secondary" onclick="closeAlertModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Keyboard Shortcuts Modal -->
+        <div id="shortcutsModal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Keyboard Shortcuts</h3>
+                <div class="shortcuts-list">
+                    <div class="shortcut-row"><kbd>Enter</kbd> Run prediction / action</div>
+                    <div class="shortcut-row"><kbd>1</kbd> - <kbd>4</kbd> Switch tabs</div>
+                    <div class="shortcut-row"><kbd>?</kbd> Show this help</div>
+                    <div class="shortcut-row"><kbd>Esc</kbd> Close modals</div>
+                </div>
+                <button class="secondary" onclick="document.getElementById('shortcutsModal').classList.add('hidden')" style="margin-top:12px">Close</button>
+            </div>
+        </div>
+
+        <!-- Floating Action Buttons -->
+        <div class="fab-container">
+            <button class="fab" onclick="openAlertModal()" title="Set Price Alert">&#9888;</button>
+            <button class="fab" onclick="exportCSV()" title="Export to CSV">&#8681;</button>
+            <button class="fab" onclick="document.getElementById('shortcutsModal').classList.remove('hidden')" title="Keyboard Shortcuts">?</button>
+        </div>
+
+        <footer>
+            <p><strong>Disclaimer:</strong> This tool is for educational and research purposes only. Stock predictions are inherently uncertain. Do not make investment decisions based solely on these predictions.</p>
+        </footer>
+    </div>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
