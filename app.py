@@ -40,6 +40,28 @@ def _save_watchlist(watchlist):
         json.dump(watchlist, f, indent=2)
 
 
+def _fetch_current_price(ticker):
+    """Robustly fetch current price for a ticker, trying multiple methods."""
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="5d", auto_adjust=True)
+        if hist is not None and not hist.empty:
+            return round(float(hist["Close"].iloc[-1]), 2)
+    except Exception:
+        pass
+    # Fallback: use yf.download
+    try:
+        df = yf.download(ticker, period="5d", progress=False)
+        if df is not None and not df.empty:
+            close_col = df["Close"]
+            if hasattr(close_col, "columns"):
+                close_col = close_col.iloc[:, 0]
+            return round(float(close_col.iloc[-1]), 2)
+    except Exception:
+        pass
+    return None
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -170,13 +192,9 @@ def check_alerts():
         # Fetch current prices for all unique tickers
         current_prices = {}
         for ticker in tickers:
-            try:
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period="5d")
-                if not hist.empty:
-                    current_prices[ticker] = round(float(hist["Close"].iloc[-1]), 2)
-            except Exception:
-                pass
+            price = _fetch_current_price(ticker)
+            if price is not None:
+                current_prices[ticker] = price
 
         # Check each alert
         triggered = []
@@ -216,14 +234,10 @@ def check_alerts():
 def get_watchlist():
     results = []
     for ticker in _load_watchlist():
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period="5d")
-            if not hist.empty:
-                price = round(float(hist["Close"].iloc[-1]), 2)
-                change = round(float(hist["Close"].pct_change().iloc[-1] * 100), 2)
-                results.append({"ticker": ticker, "price": price, "change": change})
-        except Exception:
+        price = _fetch_current_price(ticker)
+        if price is not None:
+            results.append({"ticker": ticker, "price": price, "change": 0})
+        else:
             results.append({"ticker": ticker, "price": 0, "change": 0})
     return jsonify({"watchlist": results})
 

@@ -170,10 +170,38 @@ class PredictionEngine:
             if (now - cached_time).total_seconds() < 300:
                 return cached_data.copy()
 
-        stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
-        if df.empty:
-            raise ValueError(f"No data found for ticker '{ticker}'.")
+        df = None
+        # Try multiple approaches to handle yfinance API inconsistencies
+        periods_to_try = [period, "2y", "1y", "6mo"] if period == "5y" else [period, "6mo"]
+        for p in periods_to_try:
+            try:
+                stock = yf.Ticker(ticker)
+                df = stock.history(period=p, auto_adjust=True)
+                if df is not None and not df.empty:
+                    break
+            except Exception:
+                continue
+
+        # Fallback: try download() which uses a different code path
+        if df is None or df.empty:
+            try:
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=365 * 2)
+                df = yf.download(ticker, start=start_date.strftime("%Y-%m-%d"),
+                                 end=end_date.strftime("%Y-%m-%d"), progress=False)
+            except Exception:
+                pass
+
+        if df is None or df.empty:
+            raise ValueError(
+                f"No data found for ticker '{ticker}'. "
+                "This may be due to Yahoo Finance API issues. "
+                "Please check the ticker symbol and try again."
+            )
+
+        # Handle MultiIndex columns from yf.download()
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
         df.index = pd.to_datetime(df.index)
         if df.index.tz is not None:
